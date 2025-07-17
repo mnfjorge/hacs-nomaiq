@@ -18,7 +18,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import NomaIQConfigEntry
-from .const import DOMAIN
+from .const import CONF_INVERT_GARAGE_DOOR, DOMAIN
 from .coordinator import NomaIQDataUpdateCoordinator
 
 
@@ -34,7 +34,7 @@ async def async_setup_entry(
         if device.oem_model_number == "gdo":
             # Garage Door Opener
             async_add_entities(
-                [NomaIQGarageDoorOpenerEntity(coordinator, device)],
+                [NomaIQGarageDoorOpenerEntity(coordinator, device, entry)],
                 update_before_add=False,
             )
 
@@ -46,10 +46,12 @@ class NomaIQGarageDoorOpenerEntity(CoverEntity):
         self,
         coordinator: NomaIQDataUpdateCoordinator,
         device: ayla_iot_unofficial.device.Device,
+        config_entry: NomaIQConfigEntry,
     ) -> None:
         """Initialize a NomaIQ Garage Door Opener."""
         self.coordinator = coordinator
         self._device = device
+        self._config_entry = config_entry
         self._attr_device_class = CoverDeviceClass.GARAGE
         self._attr_supported_features = (
             CoverEntityFeature.OPEN | CoverEntityFeature.CLOSE | CoverEntityFeature.STOP
@@ -74,6 +76,11 @@ class NomaIQGarageDoorOpenerEntity(CoverEntity):
         device = self._get_current_device()
         return device.get_property_value("door_status") if device else None
 
+    def _is_inverted(self) -> bool:
+        """Check if this garage door is configured to be inverted."""
+        invert_key = f"{CONF_INVERT_GARAGE_DOOR}_{self._device.serial_number}"
+        return self._config_entry.options.get(invert_key, False)
+
     def _update_transition_state(self) -> None:
         """Update the transition state based on current door status."""
         door_status = self._get_door_status()
@@ -90,18 +97,42 @@ class NomaIQGarageDoorOpenerEntity(CoverEntity):
     def is_closed(self) -> bool | None:
         """Return True if door is closed."""
         door_status = self._get_door_status()
-        return door_status == "closed"
+        if door_status is None:
+            return None
+        
+        # Normal logic: closed when status is "closed"
+        is_physically_closed = door_status == "closed"
+        
+        # If inverted, flip the result
+        if self._is_inverted():
+            return not is_physically_closed
+        
+        return is_physically_closed
 
     @property
     def is_closing(self) -> bool | None:
         """Return True if door is closing."""
         door_status = self._get_door_status()
+        if door_status is None:
+            return None
+        
+        # If inverted, "closing" becomes "opening" and vice versa
+        if self._is_inverted():
+            return door_status == "opening"
+        
         return door_status == "closing"
 
     @property
     def is_opening(self) -> bool | None:
         """Return True if door is opening."""
         door_status = self._get_door_status()
+        if door_status is None:
+            return None
+        
+        # If inverted, "opening" becomes "closing" and vice versa
+        if self._is_inverted():
+            return door_status == "closing"
+        
         return door_status == "opening"
 
     async def async_open_cover(self, **kwargs: Any) -> None:

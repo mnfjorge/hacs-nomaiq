@@ -8,15 +8,15 @@ from typing import Any
 import ayla_iot_unofficial
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.const import (
     CONF_PASSWORD,
     CONF_USERNAME,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import CLIENT_ID, CLIENT_SECRET, DOMAIN
+from .const import CLIENT_ID, CLIENT_SECRET, CONF_INVERT_GARAGE_DOOR, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -49,6 +49,12 @@ class NomaIQConfigFlow(ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
     MINOR_VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry) -> OptionsFlow:
+        """Create the options flow."""
+        return NomaIQOptionsFlow(config_entry)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -107,4 +113,45 @@ class NomaIQConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=self.add_suggested_values_to_schema(CONFIG_SCHEMA, entry.data),
             errors=errors,
             description_placeholders={"username": entry.data[CONF_USERNAME]},
+        )
+
+
+class NomaIQOptionsFlow(OptionsFlow):
+    """Handle NomaIQ options."""
+
+    def __init__(self, config_entry) -> None:
+        """Initialize NomaIQ options flow."""
+        self.config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Manage the options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        # Get current garage door devices to show options for each
+        coordinator = self.hass.data[DOMAIN][self.config_entry.entry_id]
+        garage_doors = []
+        
+        for device in coordinator.data:
+            if device.oem_model_number == "gdo":
+                garage_doors.append(device)
+
+        if not garage_doors:
+            # No garage doors found, return empty entry
+            return self.async_create_entry(title="", data={})
+
+        # Create schema with invert options for each garage door
+        schema_dict = {}
+        for device in garage_doors:
+            option_key = f"{CONF_INVERT_GARAGE_DOOR}_{device.serial_number}"
+            current_value = self.config_entry.options.get(option_key, False)
+            # Create a descriptive label for the option
+            device_name = device.name or f"Device {device.serial_number}"
+            schema_dict[vol.Optional(option_key, default=current_value, description=f"Invert {device_name}")] = bool
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(schema_dict),
         )

@@ -34,5 +34,13 @@
     "abort": {
       "reauth_successful": "Re-authentication was successful."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "NomaIQ Options",
+        "description": "Configure options for your garage doors. When enabled, invert status will show 'open' when the API reports 'closed' and vice versa."
+      }
+    }
   }
 }

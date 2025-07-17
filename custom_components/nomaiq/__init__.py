@@ -17,7 +17,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import CLIENT_ID, CLIENT_SECRET, NORMAL_UPDATE_INTERVAL
+from .const import CLIENT_ID, CLIENT_SECRET, DOMAIN, NORMAL_UPDATE_INTERVAL
 from .coordinator import NomaIQDataUpdateCoordinator
 
 _PLATFORMS: list[Platform] = [Platform.LIGHT, Platform.COVER]
@@ -59,13 +59,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: NomaIQConfigEntry) -> bo
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
 
+    # Store coordinator in hass.data for access by options flow
+    hass.data.setdefault(DOMAIN, {})
+    hass.data[DOMAIN][entry.entry_id] = coordinator
+
     await hass.config_entries.async_forward_entry_setups(entry, _PLATFORMS)
+    
+    # Set up options update listener
+    entry.async_on_unload(entry.add_update_listener(async_update_options))
 
     return True
+
+
+async def async_update_options(hass: HomeAssistant, entry: NomaIQConfigEntry) -> None:
+    """Update options."""
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: NomaIQConfigEntry) -> bool:
     """Unload a config entry."""
 
     await entry.runtime_data.api.async_sign_out()
+    
+    # Clean up hass.data
+    if DOMAIN in hass.data and entry.entry_id in hass.data[DOMAIN]:
+        hass.data[DOMAIN].pop(entry.entry_id)
+        if not hass.data[DOMAIN]:
+            hass.data.pop(DOMAIN)
+    
     return await hass.config_entries.async_unload_platforms(entry, _PLATFORMS)
