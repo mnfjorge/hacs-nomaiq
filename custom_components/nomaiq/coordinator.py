@@ -99,6 +99,13 @@ class NomaIQDataUpdateCoordinator(
                     "Performing transition update for %d devices",
                     len(self._devices_in_transition),
                 )
+                # Build a lookup of previous device state so non-transition
+                # devices don't end up with empty properties_full
+                prev_by_serial = {
+                    d.serial_number: d
+                    for d in self.data or []
+                }
+
                 for device in devices:
                     if device.serial_number in self._devices_in_transition:
                         await device.async_update()
@@ -113,6 +120,12 @@ class NomaIQDataUpdateCoordinator(
                                 device.serial_number,
                                 door_status,
                             )
+                    else:
+                        # Preserve previous device state so that entities
+                        # (e.g. smart plugs) don't read stale None values
+                        prev = prev_by_serial.get(device.serial_number)
+                        if prev is not None:
+                            device.properties_full = prev.properties_full
 
         except Exception as ex:
             raise UpdateFailed(f"Exception on getting states: {ex}") from ex

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import re
 from typing import Any
 
@@ -124,14 +123,12 @@ class NomaIQSwitchEntity(SwitchEntity):
         """Turn device on."""
         value: bool | int = 1 if self._is_outlet_property else True
         await self._device.async_set_property_value(self._property_name, value)
-        await asyncio.sleep(1)
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn device off."""
         value: bool | int = 0 if self._is_outlet_property else False
         await self._device.async_set_property_value(self._property_name, value)
-        await asyncio.sleep(1)
         await self.coordinator.async_request_refresh()
 
     async def async_update(self) -> None:
