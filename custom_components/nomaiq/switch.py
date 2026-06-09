@@ -3,19 +3,23 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import Any
 
 import ayla_iot_unofficial
 import ayla_iot_unofficial.device
 
 from homeassistant.components.switch import SwitchEntity
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import NomaIQConfigEntry
 from .const import DOMAIN
 from .coordinator import NomaIQDataUpdateCoordinator
+
+_OPTIMISTIC_TIMEOUT = 30.0
 
 _EXCLUDED_SWITCH_PROPERTIES = {"light_control", "night_mode"}
 
@@ -78,7 +82,9 @@ async def async_setup_entry(
         async_add_entities(entities, update_before_add=False)
 
 
-class NomaIQSwitchEntity(SwitchEntity):
+class NomaIQSwitchEntity(
+    CoordinatorEntity[NomaIQDataUpdateCoordinator], SwitchEntity
+):
     """Representation of a writable boolean Ayla property as a switch."""
 
     def __init__(
@@ -89,10 +95,12 @@ class NomaIQSwitchEntity(SwitchEntity):
         property_data: dict[str, Any],
     ) -> None:
         """Initialize the switch entity."""
-        self.coordinator = coordinator
+        super().__init__(coordinator)
         self._device = device
         self._property_name = property_name
         self._is_outlet_property = _is_outlet_property(property_name)
+        self._optimistic_state: bool | None = None
+        self._optimistic_until: float = 0.0
         self._attr_name = _property_display_name(property_name, property_data)
         self._attr_has_entity_name = True
         self._attr_unique_id = (
@@ -114,23 +122,45 @@ class NomaIQSwitchEntity(SwitchEntity):
     @property
     def is_on(self) -> bool | None:
         """Return true if the switch is on."""
+        if (
+            self._optimistic_state is not None
+            and time.monotonic() < self._optimistic_until
+        ):
+            return self._optimistic_state
+        self._optimistic_state = None
         device = self._get_current_device()
         if device is None:
             return None
-        return device.get_property_value(self._property_name)
+        value = device.get_property_value(self._property_name)
+        if value is None:
+            return None
+        return bool(value)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn device on."""
         value: bool | int = 1 if self._is_outlet_property else True
         await self._device.async_set_property_value(self._property_name, value)
+        self._optimistic_state = True
+        self._optimistic_until = time.monotonic() + _OPTIMISTIC_TIMEOUT
+        self.async_write_ha_state()
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn device off."""
         value: bool | int = 0 if self._is_outlet_property else False
         await self._device.async_set_property_value(self._property_name, value)
+        self._optimistic_state = False
+        self._optimistic_until = time.monotonic() + _OPTIMISTIC_TIMEOUT
+        self.async_write_ha_state()
         await self.coordinator.async_request_refresh()
 
-    async def async_update(self) -> None:
-        """Update the switch state."""
-        await self.coordinator.async_request_refresh()
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Clear optimistic state once the cloud confirms it."""
+        if self._optimistic_state is not None:
+            device = self._get_current_device()
+            if device is not None:
+                actual = device.get_property_value(self._property_name)
+                if actual is not None and bool(actual) == self._optimistic_state:
+                    self._optimistic_state = None
+        super()._handle_coordinator_update()
