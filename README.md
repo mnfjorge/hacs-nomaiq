@@ -7,6 +7,16 @@ This integration exposes devices from the Noma IQ app. For now, only the current
 - Garage Door Opener
 - Garage Door Opener's Light
 
+## Door/window contacts
+
+The `doorwin` OEM model is exposed as a read-only door binary sensor. Ayla
+`alarm_status` values `0` and `1` map to closed and open respectively. Missing or
+unrecognized values remain unknown, and coordinator failures make the entity
+unavailable. Updates use the existing 30-second cloud polling interval.
+
+Tested with a `doorwin` / `AY028MCC1` device. The owner confirmed that the sensor
+is integrated in Home Assistant and that physical open/closed behavior works.
+
 ## Installation
 
 Installation is done like any other Home Assistant HACS integration.
